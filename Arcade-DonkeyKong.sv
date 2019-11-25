@@ -29,7 +29,7 @@ module emu
 	input         RESET,
 
 	//Must be passed to hps_io module
-	inout  [44:0] HPS_BUS,
+	inout  [45:0] HPS_BUS,
 
 	//Base video clock. Usually equals to CLK_SYS.
 	output        VGA_CLK,
@@ -44,6 +44,7 @@ module emu
 	output        VGA_HS,
 	output        VGA_VS,
 	output        VGA_DE,    // = ~(VBlank | HBlank)
+	output        VGA_F1,
 
 	//Base video clock. Usually equals to CLK_SYS.
 	output        HDMI_CLK,
@@ -74,19 +75,30 @@ module emu
 
 	output [15:0] AUDIO_L,
 	output [15:0] AUDIO_R,
-	output        AUDIO_S    // 1 - signed audio samples, 0 - unsigned
+	output        AUDIO_S,    // 1 - signed audio samples, 0 - unsigned
+
+	// Open-drain User port.
+	// 0 - D+/RX
+	// 1 - D-/TX
+	// 2..6 - USR2..USR6
+	// Set USER_OUT to 1 to read from USER_IN.
+	input   [6:0] USER_IN,
+	output  [6:0] USER_OUT
 );
 
+assign VGA_F1    = 0;
+assign USER_OUT  = '1;
 assign LED_USER  = ioctl_download;
 assign LED_DISK  = 0;
 assign LED_POWER = 0;
 
-assign HDMI_ARX = status[1] ? 8'd16 : status[2] ? 8'd4 : 8'd1;
-assign HDMI_ARY = status[1] ? 8'd9  : status[2] ? 8'd3 : 8'd1;
+assign HDMI_ARX = status[1] ? 8'd16 : status[2] ? 8'd4 : 8'd3;
+assign HDMI_ARY = status[1] ? 8'd9  : status[2] ? 8'd3 : 8'd4;
 
 `include "build_id.v" 
 localparam CONF_STR = {
 	"A.DKONG;;",
+	"F,rom;", // allow loading of alternate ROMs
 	"-;",
 	"O1,Aspect Ratio,Original,Wide;",
 	"O2,Orientation,Vert,Horz;",
@@ -98,13 +110,14 @@ localparam CONF_STR = {
 	"-;",
 
 	"R0,Reset;",
-	"J1,Jump,Start 1P,Start 2P;",
+	"J1,Skip,Start 1P,Start 2P,Coin;",
 	"V,v",`BUILD_DATE
 };
 
 ////////////////////   CLOCKS   ///////////////////
 
-wire clk_sys;
+wire clk_sys, clk_snd;
+wire pll_locked;
 
 pll pll
 (
@@ -129,6 +142,8 @@ wire [10:0] ps2_key;
 wire [15:0] joystick_0, joystick_1;
 wire [15:0] joy = joystick_0 | joystick_1;
 
+wire [21:0] gamma_bus;
+
 hps_io #(.STRLEN($size(CONF_STR)>>3)) hps_io
 (
 	.clk_sys(clk_sys),
@@ -139,6 +154,7 @@ hps_io #(.STRLEN($size(CONF_STR)>>3)) hps_io
 	.buttons(buttons),
 	.status(status),
 	.forced_scandoubler(forced_scandoubler),
+	.gamma_bus(gamma_bus),
 
 	.ioctl_download(ioctl_download),
 	.ioctl_wr(ioctl_wr),
@@ -148,6 +164,7 @@ hps_io #(.STRLEN($size(CONF_STR)>>3)) hps_io
 	.joystick_0(joystick_0),
 	.joystick_1(joystick_1),
 	.ps2_key(ps2_key)
+	
 );
 
 wire       pressed = ps2_key[9];
@@ -167,6 +184,20 @@ always @(posedge clk_sys) begin
 
 			'h005: btn_one_player  <= pressed; // F1
 			'h006: btn_two_players <= pressed; // F2
+			'h004: btn_coin        <= pressed; // F3
+	
+			'h003: btn_cheat       <= pressed; // F5
+			
+			// JPAC/IPAC/MAME Style Codes
+			'h016: btn_start_1     <= pressed; // 1
+			'h01E: btn_start_2     <= pressed; // 2
+			'h02E: btn_coin_1      <= pressed; // 5
+			'h036: btn_coin_2      <= pressed; // 6
+			'h02D: btn_up_2        <= pressed; // R
+			'h02B: btn_down_2      <= pressed; // F
+			'h023: btn_left_2      <= pressed; // D
+			'h034: btn_right_2     <= pressed; // G
+			'h01C: btn_fire_2      <= pressed; // A
 		endcase
 	end
 end
@@ -175,19 +206,56 @@ reg btn_up    = 0;
 reg btn_down  = 0;
 reg btn_right = 0;
 reg btn_left  = 0;
-reg btn_fire  = 0;
 reg btn_one_player  = 0;
 reg btn_two_players = 0;
 
-wire m_up     = status[2] ? btn_left  | joy[1] : btn_up    | joy[3];
-wire m_down   = status[2] ? btn_right | joy[0] : btn_down  | joy[2];
-wire m_left   = status[2] ? btn_down  | joy[2] : btn_left  | joy[1];
-wire m_right  = status[2] ? btn_up    | joy[3] : btn_right | joy[0];
-wire m_fire   = btn_fire | joy[4];
+reg btn_coin = 0;
+reg btn_cheat = 0;
+reg btn_fire = 0;
+
+reg btn_start_1=0;
+reg btn_start_2=0;
+reg btn_coin_1=0;
+reg btn_coin_2=0;
+reg btn_up_2=0;
+reg btn_down_2=0;
+reg btn_left_2=0;
+reg btn_right_2=0;
+reg btn_cheat_2=0;
+reg btn_fire_2 = 0;
+
+wire m_up,m_down,m_left,m_right;
+joyonedir jod
+(
+	clk_sys,
+	{
+		status[2] ? btn_left  | joy[1] : btn_up    | joy[3],
+		status[2] ? btn_right | joy[0] : btn_down  | joy[2],
+		status[2] ? btn_down  | joy[2] : btn_left  | joy[1],
+		status[2] ? btn_up    | joy[3] : btn_right | joy[0]
+	},
+	{m_up,m_down,m_left,m_right}
+);
+
+wire m_up_2,m_down_2,m_left_2,m_right_2;
+joyonedir jod_2
+(
+	clk_sys,
+	{
+		status[2] ? btn_left_2  | joy[1] : btn_up_2    | joy[3],
+		status[2] ? btn_right_2 | joy[0] : btn_down_2  | joy[2],
+		status[2] ? btn_down_2  | joy[2] : btn_left_2  | joy[1],
+		status[2] ? btn_up_2    | joy[3] : btn_right_2 | joy[0]
+	},
+	{m_up_2,m_down_2,m_left_2,m_right_2}
+);
+
+
+wire m_cheat = btn_fire | btn_fire_2 | btn_cheat | joy[4];
 
 wire m_start1 = btn_one_player  | joy[5];
 wire m_start2 = btn_two_players | joy[6];
-wire m_coin   = m_start1 | m_start2;
+wire m_coin   = btn_coin | joy[7];
 
 // https://www.arcade-museum.com/dipswitch-settings/7610.html
 //wire [7:0]W_DIP={1'b1,1'b0,1'b0,1'b0,`DIP_BOUNS,`DIP_LIVES};
@@ -195,6 +263,7 @@ wire m_coin   = m_start1 | m_start2;
 wire [7:0]m_dip = { ~status[12] , 1'b0,1'b0,1'b0 , status[11:10], status[9:8]};
 
 wire hblank, vblank;
+wire ce_vid;
 wire hs, vs;
 wire [2:0] r,g;
 wire [1:0] b;
@@ -224,7 +293,6 @@ assign AUDIO_S = 0;
 
 assign hblank = hbl[8];
 
-reg  ce_vid;
 wire clk_pix;
 wire hbl0;
 reg [8:0] hbl;
@@ -279,5 +347,31 @@ dkong_top dkong
 
 	.O_SOUND_DAT(audio)
 );
+
+endmodule
+
+module joyonedir
+(
+	input        clk,
+	input  [3:0] indir,
+	output [3:0] outdir
+);
+
+reg  [3:0] mask = 0;
+reg  [3:0] in1,in2;
+wire [3:0] innew = in1 & ~in2;
+
+assign outdir = in1 & mask;
+
+always @(posedge clk) begin
+	
+	in1 <= indir;
+	in2 <= in1;
+	
+	if(innew[0]) mask <= 1;
+	if(innew[1]) mask <= 2;
+	if(innew[2]) mask <= 4;
+	if(innew[3]) mask <= 8;
+end
 
 endmodule
