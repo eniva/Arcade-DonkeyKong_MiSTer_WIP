@@ -116,8 +116,7 @@ localparam CONF_STR = {
 
 ////////////////////   CLOCKS   ///////////////////
 
-wire clk_sys, clk_snd;
-wire pll_locked;
+wire clk_sys;
 
 pll pll
 (
