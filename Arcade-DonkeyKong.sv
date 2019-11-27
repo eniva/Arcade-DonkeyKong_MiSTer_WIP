@@ -98,7 +98,6 @@ assign HDMI_ARY = status[1] ? 8'd9  : status[2] ? 8'd3 : 8'd4;
 `include "build_id.v" 
 localparam CONF_STR = {
 	"A.DKONG;;",
-	"F,rom;", // allow loading of alternate ROMs
 	"-;",
 	"O1,Aspect Ratio,Original,Wide;",
 	"O2,Orientation,Vert,Horz;",
@@ -116,13 +115,17 @@ localparam CONF_STR = {
 
 ////////////////////   CLOCKS   ///////////////////
 
-wire clk_sys;
+wire clk_sys, clk_pix;
+wire pll_locked;
 
+wire clk_hdmi;
 pll pll
 (
 	.refclk(CLK_50M),
 	.rst(0),
-	.outclk_0(clk_sys)
+	.outclk_0(clk_sys),
+	.outclk_1(clk_hdmi),
+	.locked(pll_locked)
 );
 
 ///////////////////////////////////////////////////
@@ -262,37 +265,14 @@ wire m_coin   = btn_coin | joy[7];
 wire [7:0]m_dip = { ~status[12] , 1'b0,1'b0,1'b0 , status[11:10], status[9:8]};
 
 wire hblank, vblank;
-wire ce_vid;
 wire hs, vs;
-wire [2:0] r,g;
-wire [1:0] b;
 
-arcade_rotate_fx #(256,224,8) arcade_video
-(
-	.*,
+wire [2:0] r,g,b;
 
-	.clk_video(clk_sys),
-	.ce_pix(ce_vid),
+wire [2:0] fx = status[2] ? 3'b0 : status[5:3];
 
-	.RGB_in({r,g,b}),
-	.HBlank(hblank),
-	.VBlank(vblank),
-	.HSync(~hs),
-	.VSync(~vs),
-	
-	.fx(status[5:3]),
-	.no_rotate(status[2])
-);
-
-
-wire [7:0] audio;
-assign AUDIO_L = {audio,audio};
-assign AUDIO_R = AUDIO_L;
-assign AUDIO_S = 0;
-
+reg  ce_vid;
 assign hblank = hbl[8];
-
-wire clk_pix;
 wire hbl0;
 reg [8:0] hbl;
 always @(posedge clk_sys) begin
@@ -304,6 +284,29 @@ always @(posedge clk_sys) begin
 		hbl <= (hbl<<1)|hbl0;
 	end
 end
+
+arcade_rotate_fx #(256,224,8) arcade_video
+(
+	.*,
+
+	.clk_video(clk_sys),
+	.ce_pix(ce_vid),
+
+	.RGB_in({r,g,b}),
+	.HBlank(hblank),
+	.VBlank(vblank),
+	.HSync(hs),
+	.VSync(vs),
+	
+	.fx(fx),
+	.no_rotate(status[2])
+);
+
+
+wire [7:0] audio;
+assign AUDIO_L = {audio,audio};
+assign AUDIO_R = AUDIO_L;
+assign AUDIO_S = 0;
 
 dkong_top dkong
 (
