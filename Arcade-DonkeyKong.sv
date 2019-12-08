@@ -109,6 +109,8 @@ localparam CONF_STR = {
 	"OAB,Bonus,7000,10000,15000,20000;",
 	"OC,Cabinet,Upright,Cocktail;",
 	"-;",
+	"ODG,Diagonal,Default,Change Direction,Keep Direction,Vertical,Horizontal,Stop;",
+	"-;",
 
 	"R0,Reset;",
 	"J1,Jump,Start 1P,Start 2P,Coin;",
@@ -219,21 +221,40 @@ reg btn_left_2=0;
 reg btn_right_2=0;
 reg btn_fire_2=0;
 
-wire m_up_2     = status[2] ? btn_left_2  | joy[1] : btn_up_2    | joy[3];
-wire m_down_2   = status[2] ? btn_right_2 | joy[0] : btn_down_2  | joy[2];
-wire m_left_2   = status[2] ? btn_down_2  | joy[2] : btn_left_2  | joy[1];
-wire m_right_2  = status[2] ? btn_up_2    | joy[3] : btn_right_2 | joy[0];
+wire m_up,m_down,m_left,m_right;
+enhanced4wayjoy dirinput
+(
+	clk_sys,
+	{
+		status[2] ? btn_left  | joy[1] : btn_up    | joy[3],
+		status[2] ? btn_right | joy[0] : btn_down  | joy[2],
+		status[2] ? btn_down  | joy[2] : btn_left  | joy[1],
+		status[2] ? btn_up    | joy[3] : btn_right | joy[0]
+	},
+	{m_up,m_down,m_left,m_right},
+	status[16:13]
+);
+
+wire m_up_2,m_down_2,m_left_2,m_right_2;
+enhanced4wayjoy dirinput_2
+(
+	clk_sys,
+	{
+		status[2] ? btn_left_2  | joy[1] : btn_up_2    | joy[3],
+		status[2] ? btn_right_2 | joy[0] : btn_down_2  | joy[2],
+		status[2] ? btn_down_2  | joy[2] : btn_left_2  | joy[1],
+		status[2] ? btn_up_2    | joy[3] : btn_right_2 | joy[0]
+	},
+	{m_up_2,m_down_2,m_left_2,m_right_2},
+	status[16:13]
+);
+
+wire m_fire   = btn_fire | joy[4];
 wire m_fire_2  = btn_fire_2 | joy[4];
 
-wire m_up     = status[2] ? btn_left  | joy[1] : btn_up    | joy[3];
-wire m_down   = status[2] ? btn_right | joy[0] : btn_down  | joy[2];
-wire m_left   = status[2] ? btn_down  | joy[2] : btn_left  | joy[1];
-wire m_right  = status[2] ? btn_up    | joy[3] : btn_right | joy[0];
-wire m_fire   = btn_fire | joy[4];
-
-wire m_start1 = btn_one_player  | joy[5] | btn_start_1;
-wire m_start2 = btn_two_players | joy[6] | btn_start_2;
-wire m_coin   = m_start1 | m_start2 | btn_coin_1 | btn_coin_2 | joy[7];
+wire m_start1 = btn_one_player  | joy[5];
+wire m_start2 = btn_two_players | joy[6];
+wire m_coin   = btn_one_player | btn_two_players | btn_coin_2 | btn_coin_1 | joy[7];
 
 // https://www.arcade-museum.com/dipswitch-settings/7610.html
 //wire [7:0]W_DIP={1'b1,1'b0,1'b0,1'b0,`DIP_BOUNS,`DIP_LIVES};
@@ -327,4 +348,3 @@ dkong_top dkong
 );
 
 endmodule
-
